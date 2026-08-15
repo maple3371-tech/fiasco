@@ -320,3 +320,43 @@ input:focus,textarea:focus,select:focus,.btn:focus-visible,[tabindex]:focus-visi
 
 .alarm{white-space:pre-line}
 #app.booting .screen{display:none}
+
+/* ── 연습 모드 바 ──────────────────────────────────────── */
+.demo-bar{
+  display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  padding:8px clamp(12px,3vw,28px);
+  border-bottom:1px solid var(--line);
+  background:repeating-linear-gradient(-45deg, rgba(180,137,60,.16) 0 10px, rgba(180,137,60,.06) 10px 20px);
+}
+.demo-tag{
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.2em;
+  background:var(--gold);color:#221c11;padding:3px 8px;border-radius:var(--r);font-weight:700;
+}
+
+/* ── 룰 참조 ───────────────────────────────────────────── */
+.rules-card{margin-top:14px}
+.rules-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.rule-tab{
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;
+  padding:4px 9px;border:1px solid var(--line);border-radius:var(--r);
+  background:rgba(255,255,255,.3);color:var(--ink-soft);cursor:pointer;
+}
+.rule-tab:hover{background:rgba(255,255,255,.75);color:var(--ink)}
+.rule-tab.now{border-style:dashed;border-color:var(--oxblood)}
+.rule-tab.on{background:var(--oxblood);border-color:var(--oxblood);color:#f6efe1}
+.rules-body{max-height:320px;overflow-y:auto;padding-right:6px}
+.rule-steps{margin:0 0 8px 18px;padding:0;font-size:.86rem;line-height:1.65}
+.rule-steps li{margin-bottom:4px}
+.rule-tbl{margin:0 0 12px}
+.rule-tbl-h{font-family:var(--display);font-size:.95rem;color:var(--oxblood);margin-bottom:3px}
+.rule-tbl-l{margin:0 0 0 18px;padding:0;font-size:.83rem;line-height:1.6}
+.after-row{display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:.83rem;line-height:1.55}
+.after-row:last-child{border-bottom:0}
+.after-row.zero{border-bottom:1px solid var(--line);margin-bottom:10px}
+.after-k{font-family:var(--mono);font-size:.74rem;color:var(--oxblood);white-space:nowrap;min-width:5.6em}
+
+/* ── 후기 판정 ─────────────────────────────────────────── */
+.verdict{border:1px solid var(--oxblood);border-radius:var(--r);padding:10px 12px;margin:12px 0;background:rgba(140,42,34,.07)}
+.verdict-k{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;color:var(--oxblood)}
+.verdict-t{font-family:var(--display);font-size:1.2rem;margin:2px 0 4px}
+.verdict-x{margin:0;font-size:.85rem;line-height:1.6}
