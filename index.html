@@ -24,7 +24,7 @@
       <span id="room-code-chip" class="chip hidden"></span>
       <button id="btn-rules" class="btn ghost small">진행 순서</button>
       <div id="me-chip" class="me-chip hidden">
-        <img id="me-photo" alt="">
+        <img id="me-photo" alt="" onerror="this.style.display='none'">
         <span id="me-name"></span>
         <button id="btn-signout" class="btn ghost small">나가기</button>
       </div>
@@ -53,6 +53,9 @@
       <p class="muted">구글 계정으로 들어오면 같은 방의 사람들과 주사위·관계·턴이 실시간으로 맞춰집니다.</p>
       <button id="btn-google" class="btn primary big">구글 계정으로 시작</button>
       <p id="auth-msg" class="msg"></p>
+      <p class="muted small">친구를 모으기 전에 혼자 둘러보려면
+        <a href="?demo=1" style="color:var(--oxblood)">연습 모드</a>로 열어 보세요.
+        네 사람의 시점을 오가며 처음부터 끝까지 굴려 볼 수 있습니다.</p>
     </div>
   </section>
 
@@ -103,6 +106,11 @@
         </div>
         <div id="turn-banner" class="turn-banner"></div>
         <div id="action-panel" class="card action-panel"></div>
+        <div class="card rules-card">
+          <div class="card-head"><h3>룰 참조</h3><span id="rules-hint" class="muted small"></span></div>
+          <div id="rules-tabs" class="rules-tabs"></div>
+          <div id="rules-body" class="rules-body"></div>
+        </div>
       </div>
 
       <!-- 우: 보드 -->
