@@ -360,3 +360,14 @@ input:focus,textarea:focus,select:focus,.btn:focus-visible,[tabindex]:focus-visi
 .verdict-k{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;color:var(--oxblood)}
 .verdict-t{font-family:var(--display);font-size:1.2rem;margin:2px 0 4px}
 .verdict-x{margin:0;font-size:.85rem;line-height:1.6}
+
+/* ── X 카드 경보 (구조형) ──────────────────────────────── */
+.alarm{font-size:1rem;font-family:var(--body)}
+.alarm-inner{text-align:center;max-width:600px;padding:16px}
+.alarm-title{font-family:var(--display);font-size:clamp(2.6rem,10vw,5rem);line-height:1.1}
+.alarm-sub{font-size:1rem;line-height:1.7;margin:12px 0 22px;opacity:.95}
+.alarm-close{
+  background:#f6efe1;color:var(--oxblood);border:2px solid #f6efe1;
+  font-size:1.05rem;font-weight:700;padding:12px 34px;border-radius:var(--r);
+}
+.alarm-close:hover{background:#fff}
