@@ -47,7 +47,7 @@ function die(v, color, cls = "") {
 const S = {
   uid: null, user: null, nick: "",
   code: null, room: null, players: [], logs: [],
-  unsub: [], sheetBuilt: false, lastAlert: 0, ruleTab: null
+  unsub: [], sheetBuilt: false, lastAlert: 0, alertPrimed: false, ruleTab: null
 };
 const PHASES = [
   ["setup", "준비"], ["act1", "제1막"], ["tilt", "비틀기"], ["act2", "제2막"], ["aftermath", "후기"], ["end", "끝"]
@@ -191,6 +191,7 @@ function detach() { S.unsub.forEach(u => { try { u(); } catch { } }); S.unsub = 
 
 function enterRoom(code) {
   S.code = code; S.sheetBuilt = false;
+  S.alertPrimed = false; S.lastAlert = 0;
   if (!DEMO) history.replaceState(null, "", `?room=${code}`);
   show("screen-lobby", false); show("screen-room", true);
   $("room-code-chip").textContent = `방 ${code}`;
@@ -505,15 +506,30 @@ $("btn-xcard").addEventListener("click", async () => {
   await updateDoc(roomRef(), { alert: { name: myName(), ts: Date.now() } });
   await say(`${myName()} 님이 X 카드를 올렸습니다. 장면을 멈추고 이야기해 주세요.`, "alarm");
 });
+let alarmTimer = null;
+function hideAlarm() {
+  clearTimeout(alarmTimer); alarmTimer = null;
+  $("alarm").classList.add("hidden");
+}
+$("alarm").addEventListener("click", hideAlarm);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideAlarm(); });
+
 function checkAlert() {
   const a = S.room.alert;
+  // 방에 들어온 첫 화면에서는 과거 경보를 기준점으로만 삼고 띄우지 않습니다.
+  if (!S.alertPrimed) { S.alertPrimed = true; S.lastAlert = a ? a.ts : 0; return; }
   if (a && a.ts > S.lastAlert) {
     S.lastAlert = a.ts;
     const el = $("alarm");
-    el.textContent = "X 카드\n장면을 멈춥니다";
+    el.innerHTML = `<div class="alarm-inner">
+      <div class="alarm-title">X 카드</div>
+      <div class="alarm-sub">${esc(a.name)} 님이 장면을 멈췄습니다.<br>
+        이유는 묻지 말고, 불편한 요소를 빼고 이어가 주세요.</div>
+      <button class="btn alarm-close" type="button">확인하고 닫기</button>
+    </div>`;
     el.classList.remove("hidden");
-    el.onclick = () => el.classList.add("hidden");
-    setTimeout(() => el.classList.add("hidden"), 4000);
+    clearTimeout(alarmTimer);
+    alarmTimer = setTimeout(hideAlarm, 8000);
   }
 }
 
@@ -923,7 +939,8 @@ async function resetTable() {
   })));
   await updateDoc(roomRef(), {
     phase: "lobby", setupDice: [], links: [], pool: { white: 0, black: 0 },
-    scene: null, tilt: [], tiltPool: [], tiltPickers: { black: null, white: null }, turnIndex: 0
+    scene: null, tilt: [], tiltPool: [], tiltPickers: { black: null, white: null }, turnIndex: 0,
+    alert: null
   });
   S.sheetBuilt = false;
   say("진행자가 판을 초기화했습니다.", "sys");
