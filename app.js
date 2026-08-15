@@ -1,16 +1,26 @@
 /* ===========================================================
    피아스코 온라인 테이블 — app.js
    =========================================================== */
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import {
-  getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import {
+import { firebaseConfig } from "./firebase-config.js";
+
+// ?demo=1 로 열면 Firebase 대신 브라우저 메모리에서 도는 연습 모드로 붙습니다.
+const DEMO = new URLSearchParams(location.search).has("demo");
+const CDN = "https://www.gstatic.com/firebasejs/10.12.5/";
+const [FA, FU, FS] = DEMO
+  ? await Promise.all([import("./mock-firebase.js"), import("./mock-firebase.js"), import("./mock-firebase.js")])
+  : await Promise.all([
+    import(CDN + "firebase-app.js"),
+    import(CDN + "firebase-auth.js"),
+    import(CDN + "firebase-firestore.js")
+  ]);
+const { initializeApp } = FA;
+const { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } = FU;
+const {
   getFirestore, doc, collection, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot,
   addDoc, query, orderBy, limit, serverTimestamp, runTransaction, getDocs
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+} = FS;
 import { DEFAULT_PLAYSET, blankPlayset, TABLE_LABEL } from "./playsets.js";
+import { PHASE_RULES, TILT_TABLE, AFTERMATH_BLACK, AFTERMATH_WHITE, aftermathFor } from "./rulebook.js";
 
 /* ── 짧은 도구들 ─────────────────────────────────────── */
 const $ = (id) => document.getElementById(id);
@@ -37,7 +47,7 @@ function die(v, color, cls = "") {
 const S = {
   uid: null, user: null, nick: "",
   code: null, room: null, players: [], logs: [],
-  unsub: [], sheetBuilt: false, lastAlert: 0
+  unsub: [], sheetBuilt: false, lastAlert: 0, ruleTab: null
 };
 const PHASES = [
   ["setup", "준비"], ["act1", "제1막"], ["tilt", "비틀기"], ["act2", "제2막"], ["aftermath", "후기"], ["end", "끝"]
@@ -48,6 +58,7 @@ let db, auth;
    1. Firebase 연결
    =========================================================== */
 function resolveConfig() {
+  if (DEMO) return { apiKey: "demo", projectId: "demo" };
   if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.projectId) return firebaseConfig;
   try {
     const saved = JSON.parse(localStorage.getItem("fiasco.cfg") || "null");
@@ -75,6 +86,7 @@ function boot() {
       $("me-name").textContent = u.displayName || "이름 없음";
       show("me-chip", true);
       show("screen-auth", false);
+      if (DEMO) { await seedDemo(); enterRoom("DEMO"); return; }
       const url = new URL(location.href);
       const c = (url.searchParams.get("room") || "").toUpperCase();
       $("new-nick").value = $("join-nick").value = u.displayName || "";
@@ -179,7 +191,7 @@ function detach() { S.unsub.forEach(u => { try { u(); } catch { } }); S.unsub = 
 
 function enterRoom(code) {
   S.code = code; S.sheetBuilt = false;
-  history.replaceState(null, "", `?room=${code}`);
+  if (!DEMO) history.replaceState(null, "", `?room=${code}`);
   show("screen-lobby", false); show("screen-room", true);
   $("room-code-chip").textContent = `방 ${code}`;
   show("room-code-chip", true);
@@ -205,6 +217,54 @@ const isMyTurn = () => S.room && S.room.seats[S.room.turnIndex] === S.uid;
 const turnUid = () => S.room?.seats[S.room.turnIndex];
 const poolTotal = () => (S.room?.pool.white || 0) + (S.room?.pool.black || 0);
 
+/* ── 연습 모드 ──────────────────────────────────────── */
+async function seedDemo() {
+  const users = FA.DEMO_USERS;
+  if ((await getDoc(doc(db, "rooms", "DEMO"))).exists()) return;
+  await setDoc(doc(db, "rooms", "DEMO"), {
+    code: "DEMO", host: users[0].uid, createdAt: serverTimestamp(),
+    phase: "lobby", playset: DEFAULT_PLAYSET,
+    seats: users.map(u => u.uid), turnIndex: 0,
+    totalDice: 0, halfMark: 0,
+    setupDice: [], links: [], pool: { white: 0, black: 0 },
+    scene: null, tiltPool: [], tilt: [], tiltPickers: { black: null, white: null },
+    alert: null
+  });
+  for (const u of users) {
+    await setDoc(doc(db, "rooms", "DEMO", "players", u.uid), {
+      uid: u.uid, name: u.displayName, photo: "",
+      char: { name: "", note: "", secret: "" },
+      dice: { white: 0, black: 0 }, rolled: [], net: null
+    });
+  }
+  await addDoc(collection(db, "rooms", "DEMO", "log"), {
+    text: "연습 모드입니다. 위쪽 이름을 눌러 네 사람의 시점을 오가며 혼자 진행해 볼 수 있습니다.",
+    type: "sys", uid: users[0].uid, name: "안내", at: serverTimestamp()
+  });
+}
+
+function renderDemoBar() {
+  if (!DEMO) return;
+  if (!$("demo-bar")) {
+    const bar = document.createElement("div");
+    bar.id = "demo-bar"; bar.className = "demo-bar";
+    document.querySelector(".topbar").insertAdjacentElement("afterend", bar);
+  }
+  const turn = turnUid();
+  $("demo-bar").innerHTML = `<span class="demo-tag">연습</span>
+    <span class="muted small">지금 보는 사람</span>` +
+    FA.DEMO_USERS.map(u => `<button class="btn small ${u.uid === S.uid ? "primary" : ""}" data-u="${u.uid}">
+      ${esc(u.displayName)}${u.uid === turn ? " ●" : ""}</button>`).join("") +
+    `<button class="btn ghost small" id="demo-reset">처음부터</button>`;
+  $("demo-bar").querySelectorAll("[data-u]").forEach(b => b.onclick = () => {
+    const u = FU.switchUser(b.dataset.u);
+    S.uid = u.uid; S.user = u; S.sheetBuilt = false;
+    $("me-name").textContent = u.displayName;
+    render();
+  });
+  $("demo-reset").onclick = () => { FS.resetAll?.(); location.reload(); };
+}
+
 /* ===========================================================
    3. 그리기
    =========================================================== */
@@ -216,7 +276,9 @@ function render() {
   renderLinksBoard();
   renderTilt();
   renderAction();
+  renderRules();
   renderHost();
+  renderDemoBar();
   checkAlert();
 }
 
@@ -377,6 +439,53 @@ function renderTilt() {
     }).join("");
 }
 
+/* ── 룰 참조 ────────────────────────────────────────── */
+const RULE_TABS = [
+  ["setup", "준비"], ["act1", "제1막"], ["tilt", "비틀기"], ["act2", "제2막"],
+  ["aftermath", "후기"], ["tiltTable", "비틀기 표"], ["afterTable", "후기 표"]
+];
+function currentRulePhase() {
+  const p = S.room?.phase;
+  if (!p || p === "lobby") return "setup";
+  if (p === "end") return "aftermath";
+  return p;
+}
+function renderRules() {
+  const auto = currentRulePhase();
+  const cur = S.ruleTab || auto;
+  $("rules-hint").textContent = S.ruleTab && S.ruleTab !== auto
+    ? "다른 단계를 보는 중" : "지금 단계";
+  $("rules-tabs").innerHTML = RULE_TABS.map(([k, label]) =>
+    `<button class="rule-tab ${k === cur ? "on" : ""} ${k === auto ? "now" : ""}" data-k="${k}">${label}</button>`).join("");
+  $("rules-tabs").querySelectorAll(".rule-tab").forEach(b => b.onclick = () => {
+    S.ruleTab = (b.dataset.k === auto) ? null : b.dataset.k;
+    renderRules();
+  });
+
+  const box = $("rules-body");
+  if (cur === "tiltTable") { box.innerHTML = tiltTableHTML(); return; }
+  if (cur === "afterTable") { box.innerHTML = afterTableHTML(); return; }
+  const r = PHASE_RULES[cur];
+  box.innerHTML = `<ol class="rule-steps">${r.steps.map(x => `<li>${x}</li>`).join("")}</ol>
+    <p class="hint">${r.tip}</p>`;
+}
+function tiltTableHTML() {
+  const t = S.room?.playset?.tilt || TILT_TABLE;
+  return `<p class="hint">비틀기 요소를 고를 때 주사위 눈 1~6이 아래 순서에 대응합니다.</p>
+    ${t.map((c, i) => `<div class="rule-tbl">
+      <div class="rule-tbl-h">${i + 1}. ${esc(c.name)}</div>
+      <ol class="rule-tbl-l">${c.els.map(e => `<li>${esc(e)}</li>`).join("")}</ol></div>`).join("")}`;
+}
+function afterTableHTML() {
+  const rows = (arr, name) => `<div class="rule-tbl">
+    <div class="rule-tbl-h">${name}이 높을 때</div>
+    ${arr.map(r => `<div class="after-row"><span class="after-k">${name} ${r.min === r.max ? r.min : r.max > 900 ? r.min + " 이상" : r.min + "~" + r.max}</span>
+      <span><b>${esc(r.title)}</b> ${esc(r.text)}</span></div>`).join("")}</div>`;
+  return `<div class="after-row zero"><span class="after-k">0</span>
+      <span><b>우주 최악의 상황</b> 죽지는 않을 것입니다. 차라리 죽는 게 이보다 나으니까요. 처음 떠오르는 “최악”보다 더 어둡고 비참한 것이 분명 있습니다.</span></div>
+    ${rows(AFTERMATH_BLACK, "검은색")}${rows(AFTERMATH_WHITE, "흰색")}`;
+}
+
 /* ── 기록 ───────────────────────────────────────────── */
 function renderLog() {
   $("log").innerHTML = S.logs.map(l => {
@@ -478,21 +587,24 @@ function renderAction() {
     const owner = r.scene.owner === S.uid;
     const decider = r.scene.mode === "establish" ? !owner : owner;
     const last = r.phase === "act2" && poolTotal() === 1;
+    // 가운데에서 다 떨어진 색은 고를 수 없습니다. 단 마지막 한 개는 어느 색이든 됩니다.
+    const outW = r.pool.white <= 0 && poolTotal() > 1;
+    const outB = r.pool.black <= 0 && poolTotal() > 1;
     box.innerHTML = `<h4>장면 결과 정하기</h4>
       <p class="hint">${r.scene.mode === "establish"
         ? `장면을 차린 사람은 <b>${esc(byUid(r.scene.owner).name)}</b>. 결말은 <b>다른 사람들</b>이 정합니다.`
         : `장면은 다른 사람들이 차려 주고, 결말은 <b>${esc(byUid(r.scene.owner).name)}</b> 님이 정합니다.`}
-        ${last ? "<br><b>마지막 한 개입니다. 흰색이든 검은색이든 자유롭게 고르세요.</b>" : ""}</p>
+        ${last ? "<br><b>마지막 한 개입니다. 흰색이든 검은색이든 자유롭게 고르세요.</b>" : ""}
+        ${outW ? "<br>가운데에 흰 주사위가 다 떨어졌습니다. 남은 검은색으로만 끝낼 수 있습니다." : ""}
+        ${outB ? "<br>가운데에 검은 주사위가 다 떨어졌습니다. 남은 흰색으로만 끝낼 수 있습니다." : ""}</p>
       <div class="row">
-        <button class="btn tone-white" id="out-white" ${decider ? "" : "disabled"}>좋게 끝났다 — 흰색</button>
-        <button class="btn tone-black" id="out-black" ${decider ? "" : "disabled"}>나쁘게 끝났다 — 검은색</button>
+        <button class="btn tone-white" id="out-white" ${decider && !outW ? "" : "disabled"}>좋게 끝났다 — 흰색</button>
+        <button class="btn tone-black" id="out-black" ${decider && !outB ? "" : "disabled"}>나쁘게 끝났다 — 검은색</button>
         ${owner ? `<button class="btn ghost small" id="sc-cancel">장면 취소</button>` : ""}
       </div>
       ${decider ? "" : `<p class="hint">지금은 결말을 정할 차례가 아닙니다.</p>`}`;
-    if (decider) {
-      $("out-white").onclick = () => pickOutcome("white");
-      $("out-black").onclick = () => pickOutcome("black");
-    }
+    if (decider && !outW) $("out-white").onclick = () => pickOutcome("white");
+    if (decider && !outB) $("out-black").onclick = () => pickOutcome("black");
     if (owner) $("sc-cancel").onclick = () => updateDoc(roomRef(), { scene: null });
     return;
   }
@@ -570,14 +682,18 @@ function renderAftermath(box, banner) {
   const scores = S.players.slice().sort((a, b) => seatOf(a.uid) - seatOf(b.uid)).map(x => {
     const n = x.net;
     const faces = (x.rolled || []).map(d => die(d.v, d.color, "small")).join("");
+    const af = n ? aftermathFor(n.color, n.value) : null;
     return `<div class="score-row"><span>${esc(x.name)} ${faces} <span class="muted small">남은 ${x.dice.white + x.dice.black}개</span></span>
-      <span class="score-net">${n ? (n.color === "tie" ? "무승부 0" : `${n.color === "black" ? "검은색" : "흰색"} ${n.value}`) : "아직 안 굴림"}</span></div>`;
+      <span class="score-net">${af ? `${af.label} · ${esc(af.title)}` : "아직 안 굴림"}</span></div>`;
   }).join("");
 
   box.innerHTML = `<h4>후기</h4>
     <p class="hint">제 몫이 된 주사위를 모두 굴려 비틀기와 같은 방식으로 합을 냅니다. 그 숫자와 색을 <b>룰북의 후기 표</b>에서 찾아 캐릭터의 결말을 확인하세요.
     그다음 주사위를 하나씩 무더기로 보내며 이렇게 말합니다 — “이것은 [내 캐릭터]입니다. [무엇을 하고 있습니다].”</p>
     <div style="margin:10px 0">${scores}</div>
+    ${p && p.net ? (() => { const a = aftermathFor(p.net.color, p.net.value);
+      return `<div class="verdict"><div class="verdict-k">내 결말 · ${a.label}</div>
+        <div class="verdict-t">${esc(a.title)}</div><p class="verdict-x">${esc(a.text)}</p></div>`; })() : ""}
     ${!iRolled && myLeft > 0 ? `<button class="btn primary" id="af-roll">내 주사위 굴리기</button>` : ""}
     ${iRolled && myLeft > 0 && isMyTurn() ? `
       <label class="field"><span>이번 한 컷</span>
@@ -731,7 +847,8 @@ async function rollMine() {
   const net = diff === 0 ? { color: "tie", value: 0 } : { color: diff > 0 ? "black" : "white", value: Math.abs(diff) };
   await updateDoc(playerRef(S.uid), { rolled, net });
   const label = net.color === "tie" ? "무승부 0" : `${net.color === "black" ? "검은색" : "흰색"} ${net.value}`;
-  await say(`주사위를 굴렸습니다 — 흰색 합 ${sw}, 검은색 합 ${sb} → ${label}`, "sys");
+  const tail = S.room.phase === "aftermath" ? ` · 후기 표: ${aftermathFor(net.color, net.value).title}` : "";
+  await say(`주사위를 굴렸습니다 — 흰색 합 ${sw}, 검은색 합 ${sb} → ${label}${tail}`, "sys");
 }
 
 async function decidePickers() {
@@ -964,27 +1081,14 @@ function openPlaysetModal() {
   };
 }
 
-/* 진행 순서 도움말 */
+/* 진행 순서 도움말 — 전 단계 한눈에 */
 $("btn-rules").addEventListener("click", () => {
-  openModal("진행 순서", `
-    <div class="section-label">준비</div>
-    <p class="hint">플레이세트를 고르고, 가운데에 주사위를 모두 굴려 둡니다. 가장 작은 동네에서 태어난 사람부터 시계 방향으로,
-    한 번에 주사위 하나씩 집어 관계의 분류·요소와 세부사항을 채웁니다. 옆 사람과의 관계는 필수이고, 관계마다 욕망·장소·물건 중 하나가 붙습니다.
-    다 채우면 얽힌 요소를 보고 캐릭터를 만듭니다. 마지막 한 개는 집은 사람이 눈을 정합니다.</p>
-    <div class="section-label">제1막</div>
-    <p class="hint">차례대로 장면을 만듭니다. <b>설정</b>은 내가 차리고 남이 끝내며, <b>해결</b>은 남이 차려 주고 내가 끝냅니다.
-    좋게 끝나면 흰색, 나쁘게 끝나면 검은색 주사위를 가운데에서 가져와 <b>남에게 줍니다.</b>
-    무더기가 절반이 되면 제1막이 끝납니다.</p>
-    <div class="section-label">비틀기</div>
-    <p class="hint">받은 주사위를 굴려 색깔별 합을 내고, 큰 쪽에서 작은 쪽을 뺍니다. 검은색·흰색 각각 가장 높은 사람이
-    비틀기 요소를 하나씩 골라 제2막에 쓸 수 있게 합니다. 여기서 한 번 쉬어 갑니다.</p>
-    <div class="section-label">제2막</div>
-    <p class="hint">방식은 같지만 이번엔 받은 주사위를 <b>내가 가집니다.</b> 비틀기를 적극적으로 끌어 쓰고,
-    마지막 한 개는 흰색이든 검은색이든 자유롭게 정할 수 있습니다.</p>
-    <div class="section-label">후기</div>
-    <p class="hint">내 몫이 된 주사위를 모두 굴려 비틀기와 같은 방식으로 합을 내고, 룰북의 후기 표에서 결말을 확인합니다.
-    그다음 몽타주처럼 주사위 하나마다 한 컷씩 이야기하며 내려놓습니다. 주사위가 떨어지면 끝입니다.</p>
-    <p class="hint">비틀기 표와 후기 표의 자세한 수치는 룰북을 참조하세요.</p>`);
+  openModal("진행 순서", ["setup", "act1", "tilt", "act2", "aftermath"].map(k => {
+    const r = PHASE_RULES[k];
+    return `<div class="section-label">${r.title}</div>
+      <ol class="rule-steps">${r.steps.map(x => `<li>${x}</li>`).join("")}</ol>
+      <p class="hint">${r.tip}</p>`;
+  }).join("") + `<p class="hint">비틀기 표와 후기 표는 화면 왼쪽 아래 <b>룰 참조</b>에서 언제든 볼 수 있습니다.</p>`);
 });
 
 boot();
