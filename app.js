@@ -96,6 +96,7 @@ function boot() {
         if (snap.exists() && (snap.data().seats || []).includes(u.uid)) { S.code = c; enterRoom(c); return; }
       }
       show("screen-lobby", true);
+      renderMyRooms();
     } else {
       S.uid = null; show("me-chip", false); show("screen-lobby", false);
       show("screen-room", false); show("screen-auth", true);
@@ -140,7 +141,7 @@ $("btn-create").addEventListener("click", async () => {
   await setDoc(doc(db, "rooms", code), {
     code, host: S.uid, createdAt: serverTimestamp(),
     phase: "lobby", playset: DEFAULT_PLAYSET,
-    seats: [S.uid], turnIndex: 0,
+    seats: [S.uid], turnIndex: 0, maxSeats: 5,
     totalDice: 0, halfMark: 0,
     setupDice: [], links: [], pool: { white: 0, black: 0 },
     scene: null, tiltPool: [], tilt: [], tiltPickers: { black: null, white: null },
@@ -161,7 +162,8 @@ $("btn-join").addEventListener("click", async () => {
   const r = snap.data();
   if (!r.seats.includes(S.uid)) {
     if (r.phase !== "lobby") { $("lobby-msg").textContent = "이미 시작한 테이블이라 새로 앉을 수 없습니다."; return; }
-    if (r.seats.length >= 5) { $("lobby-msg").textContent = "자리가 다 찼습니다. 피아스코는 최대 5인입니다."; return; }
+    const cap = r.maxSeats || 5;
+    if (r.seats.length >= cap) { $("lobby-msg").textContent = `자리가 다 찼습니다. 이 테이블은 ${cap}인으로 맞춰져 있습니다.`; return; }
   }
   await joinSeat(nick);
   enterRoom(code);
@@ -187,6 +189,83 @@ async function joinSeat(nick) {
   await say(`${nick} 님이 ${ps.exists() ? "다시 들어왔습니다" : "자리에 앉았습니다"}.`, "sys");
 }
 
+/* ── 내 테이블 목록 (이 브라우저에 저장) ─────────────── */
+const ROOMS_KEY = "fiasco.myrooms";
+function readRooms() {
+  try { return JSON.parse(localStorage.getItem(ROOMS_KEY) || "[]"); } catch { return []; }
+}
+function rememberRoom(code) {
+  if (DEMO) return;
+  const list = readRooms().filter(r => r.code !== code);
+  list.unshift({ code, at: Date.now() });
+  localStorage.setItem(ROOMS_KEY, JSON.stringify(list.slice(0, 12)));
+}
+function forgetRoom(code) {
+  localStorage.setItem(ROOMS_KEY, JSON.stringify(readRooms().filter(r => r.code !== code)));
+  renderMyRooms();
+}
+const PHASE_LABEL = {
+  lobby: "사람 모으는 중", setup: "준비", act1: "제1막",
+  tilt: "비틀기", act2: "제2막", aftermath: "후기", end: "끝난 판"
+};
+async function renderMyRooms() {
+  const box = $("myrooms"); if (!box) return;
+  const list = readRooms();
+  if (!list.length) {
+    box.innerHTML = `<p class="hint">아직 들어갔던 테이블이 없습니다. 위에서 방을 열거나 코드로 들어가세요.</p>`;
+    return;
+  }
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const rows = [];
+  for (const item of list) {
+    try {
+      const snap = await getDoc(doc(db, "rooms", item.code));
+      if (!snap.exists()) { rows.push({ code: item.code, gone: true }); continue; }
+      const r = snap.data();
+      rows.push({
+        code: item.code, phase: r.phase, n: (r.seats || []).length,
+        cap: r.maxSeats || 5, mine: (r.seats || []).includes(S.uid), host: r.host === S.uid
+      });
+    } catch { rows.push({ code: item.code, gone: true }); }
+  }
+  box.innerHTML = rows.map(r => r.gone
+    ? `<div class="room-row"><span class="mono">${r.code}</span>
+        <span class="muted small">없어진 방</span>
+        <button class="btn ghost small" data-forget="${r.code}">목록에서 지우기</button></div>`
+    : `<div class="room-row"><span class="mono">${r.code}</span>
+        <span class="small">${PHASE_LABEL[r.phase] || r.phase} · ${r.n}/${r.cap}인${r.host ? " · 내가 진행자" : ""}</span>
+        <span class="room-actions">
+          <button class="btn small" data-enter="${r.code}">${r.mine ? "이어서 들어가기" : "들어가기"}</button>
+          <button class="btn ghost small" data-forget="${r.code}">지우기</button>
+        </span></div>`).join("");
+  box.querySelectorAll("[data-enter]").forEach(b => b.onclick = async () => {
+    S.code = b.dataset.enter;
+    const snap = await getDoc(doc(db, "rooms", S.code));
+    if (!snap.exists()) { toast("없어진 방입니다."); forgetRoom(S.code); return; }
+    if (!(snap.data().seats || []).includes(S.uid)) {
+      const cap = snap.data().maxSeats || 5;
+      if (snap.data().phase !== "lobby") return toast("이미 시작한 테이블이라 새로 앉을 수 없습니다.");
+      if ((snap.data().seats || []).length >= cap) return toast("자리가 다 찼습니다.");
+      await joinSeat(S.user.displayName || "이름 없음");
+    }
+    enterRoom(S.code);
+  });
+  box.querySelectorAll("[data-forget]").forEach(b => b.onclick = () => forgetRoom(b.dataset.forget));
+}
+
+/* ── 방 나가서 목록으로 ─────────────────────────────── */
+function backToList() {
+  detach();
+  S.room = null; S.players = []; S.logs = []; S.code = null; S.sheetBuilt = false; S.ruleTab = null;
+  show("screen-room", false);
+  show("room-code-chip", false);
+  show("btn-tolist", false);
+  if (!DEMO) history.replaceState(null, "", location.pathname);
+  show("screen-lobby", true);
+  renderMyRooms();
+}
+$("btn-tolist").addEventListener("click", backToList);
+
 function detach() { S.unsub.forEach(u => { try { u(); } catch { } }); S.unsub = []; }
 
 function enterRoom(code) {
@@ -195,6 +274,8 @@ function enterRoom(code) {
   show("screen-lobby", false); show("screen-room", true);
   $("room-code-chip").textContent = `방 ${code}`;
   show("room-code-chip", true);
+  show("btn-tolist", !DEMO);
+  rememberRoom(code);
   detach();
   S.unsub.push(onSnapshot(roomRef(), (s) => { S.room = s.data(); render(); }));
   S.unsub.push(onSnapshot(collection(db, "rooms", code, "players"), (s) => {
@@ -509,19 +590,45 @@ function renderAction() {
 
   if (r.phase === "lobby") {
     banner.innerHTML = `<b>${N}명</b> 앉았습니다. 코드 <b>${r.code}</b>를 알려 주세요.`;
+    const cap = r.maxSeats || 5;
+    const seatList = r.seats.map((uid, i) => {
+      const p = byUid(uid);
+      return `<div class="seat-row">
+        <span class="mono small">${i + 1}</span>
+        <span class="seat-row-name">${esc(p.name)}${uid === r.host ? " · 진행자" : ""}${uid === S.uid ? " (나)" : ""}</span>
+        ${isHost() ? `<span class="seat-row-btns">
+          <button class="btn ghost small" data-mv="${i}" data-d="-1" ${i === 0 ? "disabled" : ""}>↑</button>
+          <button class="btn ghost small" data-mv="${i}" data-d="1" ${i === N - 1 ? "disabled" : ""}>↓</button>
+          <button class="btn ghost small" data-kick="${uid}" ${uid === S.uid ? "disabled" : ""}>내보내기</button>
+        </span>` : ""}
+      </div>`;
+    }).join("");
+
     box.innerHTML = `<h4>시작 전 확인</h4>
-      <p class="hint">피아스코는 <b>3~5인</b>입니다. 사람마다 6면체 주사위 4개를 쓰며, 여기서는 자동으로 준비됩니다.
-      순서는 <b>가장 작은 동네에서 태어난 사람부터 시계 방향</b>으로 정하는 것이 원래 규칙입니다. 진행자가 자리를 옮겨 맞춰 주세요.</p>
-      ${isHost() ? `<div class="row">
-        <button class="btn primary" id="a-start" ${N < 3 || N > 5 ? "disabled" : ""}>준비 단계 시작</button>
-        <button class="btn" id="a-shuffle">자리 섞기</button>
-        <button class="btn ghost" id="a-playset">플레이세트 바꾸기</button>
-      </div>${N < 3 ? `<p class="msg">세 명은 모여야 시작할 수 있습니다.</p>` : ""}`
+      <p class="hint">룰북 기준은 <b>3~5인</b>입니다. 사람마다 6면체 주사위 4개를 쓰며 여기서는 자동으로 준비됩니다.
+      순서는 <b>가장 작은 동네에서 태어난 사람부터 시계 방향</b>으로 정하는 것이 원래 규칙이니, 진행자가 아래에서 자리를 옮겨 맞춰 주세요.</p>
+      <div class="section-label">자리와 순서 — 지금 ${N}명 / 정원 ${cap}명</div>
+      <div class="seat-list">${seatList}</div>
+      ${isHost() ? `
+        <div class="section-label">정원 정하기</div>
+        <div class="row">${[2, 3, 4, 5].map(n =>
+          `<button class="btn small ${n === cap ? "primary" : ""}" data-cap="${n}" ${n < N ? "disabled" : ""}>${n}인</button>`).join("")}
+          <span class="muted small">정원보다 많이 들어올 수 없습니다.</span></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="a-start" ${N < 2 || N > cap ? "disabled" : ""}>준비 단계 시작</button>
+          <button class="btn" id="a-shuffle">자리 섞기</button>
+          <button class="btn ghost" id="a-playset">플레이세트 바꾸기</button>
+        </div>
+        ${N < 2 ? `<p class="msg">최소 두 명은 있어야 시작할 수 있습니다.</p>`
+          : N === 2 ? `<p class="hint">2인은 룰북에 없는 변형입니다. 두 사람 사이에 관계가 두 개 생기고, 주사위 8개로 진행됩니다.</p>` : ""}`
         : `<p class="hint">진행자가 시작하기를 기다리는 중입니다.</p>`}`;
     if (isHost()) {
       $("a-start").onclick = startSetup;
       $("a-shuffle").onclick = shuffleSeats;
       $("a-playset").onclick = openPlaysetModal;
+      box.querySelectorAll("[data-cap]").forEach(b => b.onclick = () => setCap(+b.dataset.cap));
+      box.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => moveSeat(+b.dataset.mv, +b.dataset.d));
+      box.querySelectorAll("[data-kick]").forEach(b => b.onclick = () => kickPlayer(b.dataset.kick));
     }
     return;
   }
@@ -720,12 +827,36 @@ async function shuffleSeats() {
   say("자리를 섞었습니다.", "sys");
 }
 
+async function setCap(n) {
+  if (n < S.room.seats.length) return toast("이미 앉은 사람보다 적게 줄일 수 없습니다.");
+  await updateDoc(roomRef(), { maxSeats: n });
+  say(`정원을 ${n}인으로 맞췄습니다.`, "sys");
+}
+
+async function moveSeat(i, d) {
+  const seats = [...S.room.seats];
+  const j = i + d;
+  if (j < 0 || j >= seats.length) return;
+  [seats[i], seats[j]] = [seats[j], seats[i]];
+  await updateDoc(roomRef(), { seats });
+}
+
+async function kickPlayer(uid) {
+  if (uid === S.uid) return toast("자기 자신은 내보낼 수 없습니다.");
+  const name = byUid(uid).name;
+  if (!confirm(`${name} 님을 자리에서 내보냅니다. 계속할까요?`)) return;
+  await updateDoc(roomRef(), { seats: S.room.seats.filter(u => u !== uid) });
+  try { await deleteDoc(playerRef(uid)); } catch { }
+  say(`${name} 님이 자리에서 빠졌습니다.`, "sys");
+}
+
 async function startSetup() {
   const N = S.room.seats.length;
-  if (N < 3 || N > 5) return toast("3~5인만 시작할 수 있습니다.");
+  if (N < 2 || N > 5) return toast("2~5인까지 시작할 수 있습니다. 룰북 기준은 3~5인입니다.");
   const total = N * 4;
   const setupDice = [];
   for (let i = 0; i < total; i++) setupDice.push({ i, color: i < total / 2 ? "white" : "black", v: d6(), by: null });
+  // 2인이면 두 사람 사이에 관계가 두 개 생깁니다(원탁의 양쪽 변).
   const links = Array.from({ length: N }, () => ({ rel: { cat: null, el: null }, det: { table: null, cat: null, el: null } }));
   await updateDoc(roomRef(), {
     phase: "setup", setupDice, links, turnIndex: 0,
