@@ -371,3 +371,19 @@ input:focus,textarea:focus,select:focus,.btn:focus-visible,[tabindex]:focus-visi
   font-size:1.05rem;font-weight:700;padding:12px 34px;border-radius:var(--r);
 }
 .alarm-close:hover{background:#fff}
+
+/* ── 내 테이블 목록 / 자리 관리 ────────────────────────── */
+.room-row{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 0;border-bottom:1px solid var(--line);font-size:.9rem;
+}
+.room-row:last-child{border-bottom:0}
+.room-row .mono{font-size:1rem;letter-spacing:.16em;color:var(--oxblood);font-weight:700}
+.room-actions{margin-left:auto;display:flex;gap:6px}
+.seat-list{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.seat-row{
+  display:flex;align-items:center;gap:8px;padding:6px 8px;
+  background:rgba(255,255,255,.35);border:1px solid var(--line);border-radius:var(--r);font-size:.88rem;
+}
+.seat-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat-row-btns{display:flex;gap:4px;flex:0 0 auto}
